@@ -1,11 +1,11 @@
 /**
  * 地震查看器 - 观测点震度显示
  * 由项目内部 ☁ eval 加载，非用户脚本
+ * 与原项目设置联动：设置 -> 地震情报タブ -> 地図に表示する情報 -> 観測点の震度
  */
 (function() {
     'use strict';
 
-    // 配置（localStorage 持久化）
     const CONFIG_KEY = 'quake_intensity_config';
     let config = { enabled: true, minIntensity: 1 };
     try {
@@ -17,7 +17,6 @@
         try { localStorage.setItem(CONFIG_KEY, JSON.stringify(config)); } catch(e) {}
     }
 
-    // 创建叠加canvas（透明，无指针事件）
     const canvas = document.createElement('canvas');
     canvas.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:50;';
     document.body.appendChild(canvas);
@@ -34,20 +33,57 @@
         return null;
     }
 
+    // Scratch变量格式是数组: [name, value] 或 [name, value, isCloud]
     function getScratchList(name) {
         try {
             const vm = window.vm;
             if (!vm) return null;
             const stage = vm.runtime.getTargetForStage();
             for (const [id, v] of Object.entries(stage.variables)) {
-                if (v.type === 'list' && v.name === name) return v.value;
+                if (Array.isArray(v) && v[0] === name && Array.isArray(v[1])) {
+                    return v[1];
+                }
             }
         } catch(e) {}
         return null;
     }
 
+    // 检查原项目设置里是否选择了"観測点の震度"
+    function checkSystemSetting() {
+        try {
+            const settings = getScratchList('7システム設定');
+            if (!settings) return true; // 读不到就默认开启
+            // 遍历设置，找包含"観測点"或"震度"的项
+            for (let i = 0; i < settings.length; i++) {
+                const s = String(settings[i]);
+                if (s.includes('観測点') || s.includes('震度')) {
+                    // 如果值是"観測点の震度"或包含震度相关，就开启
+                    return true;
+                }
+            }
+            // 如果设置里有"地図に表示"相关的项，检查它的值
+            for (let i = 0; i < settings.length; i++) {
+                const s = String(settings[i]);
+                if (s.includes('地図に表示') || s.includes('表示する情報')) {
+                    const next = settings[i + 1];
+                    if (next && String(next).includes('観測点')) return true;
+                }
+            }
+        } catch(e) {}
+        return true; // 默认开启
+    }
+
+    let systemEnabled = true;
+    let lastSettingCheck = 0;
+
     function draw() {
-        if (!config.enabled) {
+        const now = Date.now();
+        if (now - lastSettingCheck > 2000) {
+            systemEnabled = checkSystemSetting();
+            lastSettingCheck = now;
+        }
+
+        if (!config.enabled || !systemEnabled) {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             requestAnimationFrame(draw);
             return;
@@ -94,7 +130,6 @@
             const color = getIntensityColor(intVal);
             if (!color) continue;
 
-            // 震度数值
             ctx.fillStyle = color;
             ctx.strokeStyle = 'rgba(0,0,0,0.85)';
             ctx.lineWidth = 2.5;
@@ -117,7 +152,6 @@
         }
     });
 
-    // 暴露全局API，方便Scratch内部调用
     window.QuakeIntensity = {
         setEnabled: function(v) { config.enabled = v; saveConfig(); },
         isEnabled: function() { return config.enabled; },
